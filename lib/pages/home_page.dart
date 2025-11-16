@@ -5,6 +5,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:video_player/video_player.dart';
 import '../routes.dart';
 
+// NEW: Imports for API calls
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -25,28 +29,22 @@ class _HomePageState extends State<HomePage>
   final TextEditingController _textController = TextEditingController();
   late AnimationController _micAnimationController;
 
+  // NEW: State for API call
+  bool _isLoading = false;
+
   @override
   void initState() {
     super.initState();
-    // Initialize video controller
+    // Initialize video controller with the asset
     _videoController = VideoPlayerController.asset('assets/sample_video.mp4')
       ..initialize().then((_) {
         setState(() {});
         _videoController.play();
+        _videoController.setLooping(true);
       });
 
     // Add listener to track video position
-    _videoController.addListener(() {
-      if (mounted) {
-        setState(() {
-          if (_videoController.value.duration.inMilliseconds > 0) {
-            _videoPosition =
-                _videoController.value.position.inMilliseconds /
-                _videoController.value.duration.inMilliseconds;
-          }
-        });
-      }
-    });
+    _videoController.addListener(_videoListener);
 
     // Initialize microphone animation
     _micAnimationController = AnimationController(
@@ -55,15 +53,142 @@ class _HomePageState extends State<HomePage>
     )..repeat(reverse: true);
   }
 
+  // NEW: Extracted listener
+  void _videoListener() {
+    if (mounted) {
+      setState(() {
+        if (_videoController.value.isInitialized &&
+            _videoController.value.duration.inMilliseconds > 0) {
+          _videoPosition =
+              _videoController.value.position.inMilliseconds /
+              _videoController.value.duration.inMilliseconds;
+        } else {
+          _videoPosition = 0.0;
+        }
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _videoController.removeListener(_videoListener); // NEW: Remove listener
     _videoController.dispose();
     _recordingTimer?.cancel();
     _micAnimationController.dispose();
+    _textController.dispose(); // NEW: Dispose text controller
     super.dispose();
   }
 
+  // NEW: Function to update the video player from a URL
+  Future<void> _updateVideoPlayerFromUrl(String videoUrl) async {
+    // Dispose the old controller
+    await _videoController.pause();
+    _videoController.removeListener(_videoListener);
+    await _videoController.dispose();
+
+    // Initialize the new controller from a NETWORK URL
+    _videoController = VideoPlayerController.networkUrl(Uri.parse(videoUrl))
+      ..initialize()
+          .then((_) {
+            setState(() {
+              _isLoading = false; // Video loaded
+            });
+            _videoController.play();
+            _videoController.setLooping(true);
+            _isPlaying = true;
+          })
+          .catchError((error) {
+            setState(() {
+              _isLoading = false;
+            });
+            _showErrorSnackBar("Failed to load video: $error");
+            // Revert to sample video on error
+            _updateVideoPlayerFromAsset('assets/sample_video.mp4');
+          });
+    _videoController.addListener(_videoListener);
+  }
+
+  // NEW: Helper to load asset video (for fallback)
+  Future<void> _updateVideoPlayerFromAsset(String assetPath) async {
+    await _videoController.pause();
+    _videoController.removeListener(_videoListener);
+    await _videoController.dispose();
+
+    _videoController = VideoPlayerController.asset(assetPath)
+      ..initialize().then((_) {
+        setState(() {});
+        _videoController.play();
+        _videoController.setLooping(true);
+        _isPlaying = true;
+      });
+    _videoController.addListener(_videoListener);
+  }
+
+  // NEW: Function to call the API
+  Future<void> _sendTextToApi() async {
+    final text = _textController.text;
+    _showErrorSnackBar('Send button tapped');
+    if (text.isEmpty) return;
+
+    setState(() {
+      _isLoading = true; // Show loading indicator
+    });
+
+    // --- IMPORTANT: API URL ---
+    // Use 'http://10.0.2.2:8000' for Android Emulator
+    // Use 'http://127.0.0.1:8000' for Desktop app or Web
+    // Use your server's LAN IP (e.g., 'http://192.168.1.5:8000') for a real device
+    final url = Uri.parse('http://192.168.100.24:8000/predict/video');
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json; charset=UTF-8'},
+        body: jsonEncode({'text': text, 'fps': 30}),
+      );
+
+      if (response.statusCode == 200) {
+        final responseBody = jsonDecode(response.body);
+        final videoUrl = responseBody['video_url'];
+
+        if (videoUrl != null) {
+          // We got the URL, now update the player
+          await _updateVideoPlayerFromUrl(videoUrl);
+          _textController.clear();
+        } else {
+          _showErrorSnackBar('API returned success but no video URL.');
+          setState(() => _isLoading = false);
+        }
+      } else {
+        // Handle HTTP error
+        _showErrorSnackBar(
+          'API Error: ${response.statusCode} - ${response.body}',
+        );
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      // Handle network/other errors
+      _showErrorSnackBar(
+        'Failed to connect to API. Is the server running? \nError: $e',
+      );
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // NEW: Helper for showing errors
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
   Future<bool> _onWillPop() async {
+    // ... (your existing _onWillPop code is fine) ...
     if (_isProfileMenuOpen) {
       setState(() => _isProfileMenuOpen = false);
       return false;
@@ -100,6 +225,7 @@ class _HomePageState extends State<HomePage>
   }
 
   void _startRecording() {
+    // ... (your existing _startRecording code is fine) ...
     setState(() {
       _isRecording = true;
       _recordingSeconds = 0;
@@ -112,6 +238,7 @@ class _HomePageState extends State<HomePage>
   }
 
   void _stopRecording() {
+    // ... (your existing _stopRecording code is fine) ...
     setState(() {
       _isRecording = false;
       _recordingTimer?.cancel();
@@ -120,6 +247,7 @@ class _HomePageState extends State<HomePage>
   }
 
   Widget _buildRecordingUI() {
+    // ... (your existing _buildRecordingUI code is fine) ...
     if (!_isRecording) return const SizedBox.shrink();
 
     return Positioned(
@@ -190,7 +318,7 @@ class _HomePageState extends State<HomePage>
         backgroundColor: const Color(0xFFE0F7FA),
         body: Stack(
           children: [
-            // Background gradient
+            // ... (your existing background gradient) ...
             Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -278,7 +406,9 @@ class _HomePageState extends State<HomePage>
                       Padding(
                         padding: const EdgeInsets.all(12.0),
                         child: Text(
-                          "This is a demonstration of sign language translation",
+                          _isLoading
+                              ? "Generating video..."
+                              : "This is a demonstration of sign language translation", // You can update this text
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
@@ -315,7 +445,7 @@ class _HomePageState extends State<HomePage>
                 ),
                 child: Row(
                   children: [
-                    // Microphone/Recording button
+                    // ... (your existing mic button) ...
                     GestureDetector(
                       onTap: () {
                         if (_isRecording) {
@@ -339,7 +469,6 @@ class _HomePageState extends State<HomePage>
                         ),
                       ),
                     ),
-
                     const SizedBox(width: 10),
 
                     // Text input field
@@ -367,16 +496,31 @@ class _HomePageState extends State<HomePage>
                     const SizedBox(width: 10),
 
                     // Send button
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF00BCD4),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.send,
-                        color: Colors.white,
-                        size: 28,
+                    // NEW: Wrapped in GestureDetector and show loading
+                    GestureDetector(
+                      onTap: _isLoading
+                          ? null
+                          : _sendTextToApi, // NEW: Call API on tap
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF00BCD4),
+                          shape: BoxShape.circle,
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 3,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.send,
+                                color: Colors.white,
+                                size: 28,
+                              ),
                       ),
                     ),
                   ],
@@ -384,6 +528,7 @@ class _HomePageState extends State<HomePage>
               ),
             ),
 
+            // ... (your existing profile icon and profile menu code is fine) ...
             // Profile icon in top right corner
             Positioned(
               top: MediaQuery.of(context).padding.top + 20,
@@ -417,16 +562,16 @@ class _HomePageState extends State<HomePage>
             ),
 
             // Profile menu sliding from right
-            if (_isProfileMenuOpen)
-              GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _isProfileMenuOpen = false;
-                  });
-                },
-                behavior: HitTestBehavior.opaque,
-                child: Container(color: Colors.black.withOpacity(0.3)),
-              ),
+            // if (_isProfileMenuOpen)
+            //   GestureDetector(
+            //     onTap: () {
+            //       setState(() {
+            //         _isProfileMenuOpen = false;
+            //       });
+            //     },
+            //     behavior: HitTestBehavior.opaque,
+            //     child: Container(color: Colors.black.withOpacity(0.3)),
+            //   ),
 
             // Profile menu content
             AnimatedPositioned(
@@ -584,6 +729,7 @@ class _HomePageState extends State<HomePage>
     required VoidCallback onTap,
     bool isLogout = false,
   }) {
+    // ... (your existing _buildMenuItem code is fine) ...
     return ListTile(
       leading: Icon(
         icon,
