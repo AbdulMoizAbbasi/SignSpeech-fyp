@@ -138,7 +138,7 @@ class _HomePageState extends State<HomePage>
     // Use 'http://10.0.2.2:8000' for Android Emulator
     // Use 'http://127.0.0.1:8000' for Desktop app or Web
     // Use your server's LAN IP (e.g., 'http://192.168.1.5:8000') for a real device
-    final url = Uri.parse('http://192.168.100.24:8000/predict/video');
+    final url = Uri.parse('http://192.168.180.8:8000/predict/video');
 
     try {
       final response = await http.post(
@@ -353,7 +353,7 @@ class _HomePageState extends State<HomePage>
                       // Video Player
                       Container(
                         color: Colors.black,
-                        height: 200,
+                        height: 350,
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
