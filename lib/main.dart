@@ -1,4 +1,3 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'routes.dart';
@@ -20,9 +19,10 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFE0F7FA),
+        scaffoldBackgroundColor: Colors.white,
       ),
       initialRoute: '/login',
+      // Key change: Use onGenerateRoute with your generator class
       onGenerateRoute: RouteGenerator.generateRoute,
     );
   }
